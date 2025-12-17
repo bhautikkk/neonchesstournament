@@ -570,8 +570,8 @@ socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT,
 
     // Restore State
     game.load(fen);
-    whiteTime = Math.ceil(wT);
-    blackTime = Math.ceil(bT);
+    whiteTime = wT; // Use exact float
+    blackTime = bT;
 
     updateTurnIndicator();
     renderBoard();
@@ -581,25 +581,35 @@ socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT,
 });
 
 socket.on('move_made', ({ move, fen, whiteTime: wT, blackTime: bT }) => {
-    // Try to play the move to preserve history
-    const result = game.move(move);
-
-    // If move failed or FEN doesn't match, force load (fixing desync)
-    if (!result || (fen && game.fen() !== fen)) {
-        console.warn("Syncing board state (History may be reset)");
-        if (fen) game.load(fen);
+    // 1. Sync Board State
+    // If the FEN does not match our current state, it means we either:
+    // a) Are the opponent receiving the move
+    // b) Are the sender but Desynced
+    // c) Are a spectator
+    if (fen && game.fen() !== fen) {
+        // Try to play the move normally to keep animation
+        const result = game.move(move);
+        // If normal move failed (super desync), force load
+        if (!result || game.fen() !== fen) {
+            game.load(fen);
+        }
     }
+    // If FEN matches, we are likely the sender who Just moved locally. 
+    // We Do Nothing to the board, but we MUST consume the Time Sync below.
 
-    // Sync Timers
-    if (wT !== undefined) whiteTime = Math.ceil(wT);
-    if (bT !== undefined) blackTime = Math.ceil(bT);
+    // 2. Sync Timers (Authoritative from Server)
+    if (wT !== undefined) whiteTime = wT; // Keep precise float
+    if (bT !== undefined) blackTime = bT;
 
-    currentViewIndex = -1; // Snap everyone to live on new move
+    // 3. Reset Timer Loop to align with this receipt time
+    startTimers();
+
+    // 4. Update UI
+    currentViewIndex = -1; // Snap to live
     updateTurnIndicator();
     renderBoard();
-    updateMaterial();    // NEW
-    updateDashboardUI(); // NEW
-    // Play sound?
+    updateMaterial();
+    updateDashboardUI();
 });
 
 
@@ -1038,6 +1048,22 @@ function handleSquareClick(squareId) {
         const move = game.move(moveAttempt);
         if (move) {
             selectedSquare = null;
+
+            // OPTIMISTIC TIMER UPDATE
+            // 1. Calculate time spent on this turn
+            const now = Date.now();
+            const spent = (now - lastTimerSync) / 1000;
+
+            // 2. Deduct from My Time permanently (locally) to freeze it until server sync
+            if (myColor === 'w') {
+                whiteTime = Math.max(0, whiteTime - spent);
+            } else {
+                blackTime = Math.max(0, blackTime - spent);
+            }
+
+            // 3. Reset Anchor so the NEXT turn (Opponent) starts counting from 0 elapsed
+            lastTimerSync = now;
+
             updateTurnIndicator();
             renderBoard();
 

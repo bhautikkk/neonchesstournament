@@ -190,8 +190,8 @@ io.on('connection', (socket) => {
             room.turn = (room.turn === 'w') ? 'b' : 'w';
             room.lastMoveTime = now;
 
-            // Broadcast to OTHERS with new time
-            socket.to(roomCode).emit('move_made', { move, fen, whiteTime: room.whiteTime, blackTime: room.blackTime });
+            // Broadcast to ALL (including sender) to ensure Time Sync is perfect
+            io.to(roomCode).emit('move_made', { move, fen, whiteTime: room.whiteTime, blackTime: room.blackTime });
         }
     });
 

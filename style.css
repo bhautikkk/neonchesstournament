@@ -59,6 +59,11 @@ body::before {
     transition: opacity 0.3s ease;
 }
 
+/* Global Hidden Utility */
+.hidden {
+    display: none !important;
+}
+
 .screen.hidden {
     display: none;
     opacity: 0;

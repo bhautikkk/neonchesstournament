@@ -104,6 +104,8 @@ const actionControls = document.getElementById('actionControls');
 const btnDraw = document.getElementById('btnDraw');
 const btnResign = document.getElementById('btnResign');
 const btnPGN = document.getElementById('btnPGN');
+const returnToLobbyBtn = document.getElementById('returnToLobbyBtn');
+const backToGameBtn = document.getElementById('backToGameBtn');
 
 let selectedSquare = null;
 let timerInterval = null;
@@ -130,6 +132,22 @@ if (btnPGN) {
             console.error('Failed to copy PGN: ', err);
             showToast("Failed to copy PGN");
         });
+    });
+}
+
+if (returnToLobbyBtn) {
+    returnToLobbyBtn.addEventListener('click', () => {
+        showScreen('lobby');
+        // Optional: Notify server to reset 'gameStarted' completely if not already?
+        // Actually server resets it on game_over.
+        // But maybe we want to enable lobby controls for admin again
+        // renderLobby is driven by socket updates.
+    });
+}
+
+if (backToGameBtn) {
+    backToGameBtn.addEventListener('click', () => {
+        showScreen('game');
     });
 }
 
@@ -335,8 +353,9 @@ socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
     hasGameEnded = true;
     if (timerInterval) clearInterval(timerInterval);
 
-    // Show PGN Button
+    // Show PGN Button & Return to Lobby
     if (btnPGN) btnPGN.classList.remove('hidden');
+    if (returnToLobbyBtn) returnToLobbyBtn.classList.remove('hidden');
 
     // Standard Message for Popup (2s)
     let title = "";
@@ -573,6 +592,7 @@ socket.on('game_started', ({ whitePlayerId, blackPlayerId }) => {
 
     game.reset();
     if (btnPGN) btnPGN.classList.add('hidden'); // Hide PGN at start of new game
+    if (returnToLobbyBtn) returnToLobbyBtn.classList.add('hidden'); // Hide Lobby Btn
     whiteTime = 600;
     blackTime = 600;
     updateTurnIndicator();
@@ -717,6 +737,15 @@ function renderLobby(room) {
         adminMsg.style.display = 'none';
         waitingText.style.display = 'block';
         startGameBtn.style.display = 'none';
+    }
+
+    // Back to Game Button Logic
+    if (backToGameBtn) {
+        if (room.gameStarted) {
+            backToGameBtn.classList.remove('hidden');
+        } else {
+            backToGameBtn.classList.add('hidden');
+        }
     }
 }
 

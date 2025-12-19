@@ -1112,13 +1112,21 @@ function updateMaterial() {
 
     const renderCaptured = (container, types, colorOfPieces) => {
         container.innerHTML = '';
-        types.forEach(type => {
+        let lastType = null;
+        types.forEach((type, index) => {
             const img = document.createElement('img');
             // Get SVG for that piece color
             const key = (colorOfPieces === 'w') ? type.toUpperCase() : type.toLowerCase();
             img.src = pieceSymbols[key];
             img.classList.add('captured-piece-icon');
+
+            // Add gap between different piece groups
+            if (lastType && lastType !== type) {
+                img.style.marginLeft = "-2px";
+            }
+
             container.appendChild(img);
+            lastType = type;
         });
     };
 

@@ -824,7 +824,7 @@ input,
     height: 14px;
     width: auto;
     opacity: 0.9;
-    margin-left: -6px;
+    margin-left: -8px;
     /* More Overlap effect */
     transition: transform 0.2s;
 }

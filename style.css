@@ -602,6 +602,25 @@ input,
     background: rgba(68, 136, 255, 0.4);
 }
 
+/* Specific resize for PGN and Lobby buttons to prevent layout shift */
+#btnPGN,
+#returnToLobbyBtn {
+    font-size: 0.75rem !important;
+    padding: 4px 8px !important;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 5px !important;
+}
+
+#returnToLobbyBtn {
+    /* Override inline styles from HTML if needed, though !important handles size */
+    background: #666;
+    border: none;
+    line-height: 1;
+}
+
 .action-controls.hidden {
     display: none;
     /* Hide from spectators */

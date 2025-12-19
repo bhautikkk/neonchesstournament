@@ -641,6 +641,16 @@ if (copyLinkBtn) {
 }
 
 // Admin Lobby Controls
+if (returnToLobbyBtn) {
+    returnToLobbyBtn.onclick = () => {
+        showScreen('lobby');
+        // Re-render lobby to ensure everything is fresh
+        if (currentRoom) {
+            renderLobby(currentRoom);
+        }
+    };
+}
+
 startGameBtn.addEventListener('click', () => {
     if (isAdmin && currentRoom) {
         socket.emit('start_game', currentRoom.code);
@@ -899,6 +909,11 @@ socket.on('move_made', ({ move, fen, whiteTime: wT, blackTime: bT }) => {
 // ============================================
 
 function renderLobby(room) {
+    // Ensure admin state is current
+    if (socket && socket.id) {
+        isAdmin = (room.admin === socket.id);
+    }
+
     displayRoomCode.innerText = room.code;
 
     // Player List

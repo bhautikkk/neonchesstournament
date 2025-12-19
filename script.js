@@ -229,6 +229,7 @@ let isGameActive = false;
 let hasGameEnded = false; // NEW: Track if game finished to show "View Last Grame"
 let game = new Chess();
 let adminToken = null; // Store locally for reconnection
+let playerToken = null; // Store locally for reconnection
 
 const pieceSymbols = {
     'k': 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg',
@@ -621,9 +622,16 @@ backToMenuBtn.addEventListener('click', () => {
 joinRoomBtn.addEventListener('click', () => {
     const code = roomCodeInput.value.trim();
     if (code.length === 6) {
-        // Try to retrieve token if we have one for this room
-        const storedToken = localStorage.getItem(`adminToken_${code}`);
-        socket.emit('join_room', { roomCode: code, playerName: myName, adminToken: storedToken });
+        // Try to retrieve tokens
+        const storedAdminToken = localStorage.getItem(`adminToken_${code}`);
+        const storedPlayerToken = localStorage.getItem(`playerToken_${code}`);
+
+        socket.emit('join_room', {
+            roomCode: code,
+            playerName: myName,
+            adminToken: storedAdminToken,
+            playerToken: storedPlayerToken
+        });
     } else {
         joinError.innerText = "Please enter a valid 6-digit code";
     }
@@ -702,32 +710,112 @@ socket.on('connect', () => {
     // Auto-Rejoin if we were already in a room (Network Glitch / Reconnect)
     if (currentRoom && myName) {
         console.log("Attempting to auto-rejoin...", currentRoom.code);
-        const storedToken = localStorage.getItem(`adminToken_${currentRoom.code}`);
+        const storedAdminToken = localStorage.getItem(`adminToken_${currentRoom.code}`);
+        const storedPlayerToken = localStorage.getItem(`playerToken_${currentRoom.code}`);
+
         socket.emit('join_room', {
             roomCode: currentRoom.code,
             playerName: myName, // Re-send name
-            adminToken: storedToken
+            adminToken: storedAdminToken,
+            playerToken: storedPlayerToken
         });
     }
 });
 
-socket.on('room_created', ({ roomCode, isAdmin: adminStatus, adminToken: token }) => {
+socket.on('room_created', ({ roomCode, isAdmin: adminStatus, adminToken: aToken, playerToken: pToken }) => {
     isAdmin = adminStatus;
-    if (token) {
-        adminToken = token;
-        localStorage.setItem(`adminToken_${roomCode}`, token); // Save for this room
+    // Save Admin Token
+    if (aToken) {
+        adminToken = aToken;
+        localStorage.setItem(`adminToken_${roomCode}`, aToken);
+    }
+    // Save Player Token (Everyone gets one)
+    if (pToken) {
+        playerToken = pToken;
+        localStorage.setItem(`playerToken_${roomCode}`, pToken);
     }
     showScreen('lobby');
 });
 
-socket.on('joined_room', ({ roomCode, isAdmin: adminStatus, adminToken: token }) => {
+socket.on('joined_room', ({ roomCode, isAdmin: adminStatus, adminToken: aToken, playerToken: pToken }) => {
     isAdmin = adminStatus;
-    // If we joined and got a token (e.g. recognized as admin), ensure it's saved
-    if (token) {
-        adminToken = token;
-        localStorage.setItem(`adminToken_${roomCode}`, token);
+    // Save Admin Token if provided (reclaimed)
+    if (aToken) {
+        adminToken = aToken;
+        localStorage.setItem(`adminToken_${roomCode}`, aToken);
+    }
+    // Save Player Token
+    if (pToken) {
+        playerToken = pToken;
+        localStorage.setItem(`playerToken_${roomCode}`, pToken);
     }
     showScreen('lobby');
+});
+
+// NEW: Player Disconnect Warning
+socket.on('player_disconnected_game', ({ color, time }) => {
+    showToast(`${color} has disconnected. Waiting ${time}s...`, 5000);
+
+    // Add a visual countdown on the board or info panel
+    // Simple approach: Update the Name Display temporarily
+    const displayEl = (color === 'White') ? document.getElementById('myNameDisplay') : document.getElementById('oppNameDisplay');
+    // Note: This depends on perspective. 
+    // We should ideally check myColor vs color.
+
+    let targetEl = null;
+    // If I am White, opponent is Black. 
+    if (myColor === 'w') {
+        if (color === 'Black') targetEl = oppNameDisplay;
+    } else if (myColor === 'b') {
+        if (color === 'White') targetEl = oppNameDisplay;
+    } else {
+        // Spectator
+        if (color === 'White') targetEl = myNameDisplay; // White uses bottom slots in spectator
+        if (color === 'Black') targetEl = oppNameDisplay;
+    }
+
+    if (targetEl) {
+        const originalText = targetEl.innerText;
+        targetEl.dataset.originalText = originalText; // Store original
+
+        let timeLeft = time;
+        targetEl.innerText = `${originalText} (Reconnecting... ${timeLeft})`;
+        targetEl.style.color = '#ff4444'; // Red warning
+
+        // Clear any existing interval on this element
+        if (targetEl.disconnectInterval) clearInterval(targetEl.disconnectInterval);
+
+        targetEl.disconnectInterval = setInterval(() => {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                targetEl.innerText = `${originalText} (Abandoned)`;
+                clearInterval(targetEl.disconnectInterval);
+            } else {
+                targetEl.innerText = `${originalText} (Reconnecting... ${timeLeft})`;
+            }
+        }, 1000);
+    }
+});
+
+socket.on('player_reconnected_game', ({ color }) => {
+    showToast(`${color} has reconnected!`, 3000);
+
+    // Restore Name Display
+    let targetEl = null;
+    if (myColor === 'w') {
+        if (color === 'Black') targetEl = oppNameDisplay;
+    } else if (myColor === 'b') {
+        if (color === 'White') targetEl = oppNameDisplay;
+    } else {
+        if (color === 'White') targetEl = myNameDisplay;
+        if (color === 'Black') targetEl = oppNameDisplay;
+    }
+
+    if (targetEl && targetEl.dataset.originalText) {
+        clearInterval(targetEl.disconnectInterval);
+        targetEl.innerText = targetEl.dataset.originalText;
+        targetEl.style.color = ''; // Reset color
+    }
 });
 
 socket.on('error_message', (msg) => {
@@ -936,6 +1024,9 @@ function renderLobby(room) {
     if (socket && socket.id) {
         isAdmin = (room.admin === socket.id);
     }
+    console.log("Rendering Lobby. Room:", room);
+    console.log("Players:", room.players);
+    console.log("Slots:", room.slots);
 
     displayRoomCode.innerText = room.code;
 

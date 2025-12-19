@@ -21,6 +21,10 @@ function generateAdminToken() {
     return Math.random().toString(36).substr(2) + Math.random().toString(36).substr(2);
 }
 
+function generatePlayerToken() {
+    return Math.random().toString(36).substr(2) + Math.random().toString(36).substr(2);
+}
+
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
@@ -32,8 +36,8 @@ io.on('connection', (socket) => {
             code: roomCode,
             admin: socket.id,
             adminToken: adminToken, // Store locally
-            disconnectTimeout: null, // Grace period timer
-            players: [{ id: socket.id, name: playerName, shineColor: null }],
+            disconnectTimeout: null, // Grace period timer for Admin (Room Closure)
+            players: [{ id: socket.id, name: playerName, shineColor: null, token: adminToken, disconnectGameTimeout: null }],
             slots: {
                 white: null,
                 black: null
@@ -47,37 +51,78 @@ io.on('connection', (socket) => {
         };
 
         socket.join(roomCode);
-        // Send token ONLY to the creator
-        socket.emit('room_created', { roomCode, isAdmin: true, adminToken });
+        // Send token ONLY to the creator (Admin uses same token for Player ID)
+        socket.emit('room_created', { roomCode, isAdmin: true, adminToken, playerToken: adminToken });
         io.to(roomCode).emit('update_lobby', rooms[roomCode]);
         console.log(`Room ${roomCode} created by ${playerName}`);
     });
 
     // Join Room
-    socket.on('join_room', ({ roomCode, playerName, adminToken }) => {
+    socket.on('join_room', ({ roomCode, playerName, adminToken, playerToken }) => {
         const room = rooms[roomCode];
         if (room) {
-            // Check if already in room (simple check)
-            const existingPlayer = room.players.find(p => p.id === socket.id);
-            if (!existingPlayer) {
-                room.players.push({ id: socket.id, name: playerName, shineColor: null });
+            let player = null;
+            let isReconnecting = false;
+
+            // 1. Try to find existing player by Token or ID
+            if (playerToken) {
+                player = room.players.find(p => p.token === playerToken);
+            }
+            // Fallback: Check ID (not persistent across refreshes, but good for simple disconnects)
+            if (!player) {
+                player = room.players.find(p => p.id === socket.id);
+            }
+
+            if (player) {
+                // RECONNECTING PLAYER
+                console.log(`Player ${player.name} reconnected to ${roomCode}`);
+                player.id = socket.id; // Update Socket ID
+                isReconnecting = true;
+
+                // Handle Game Disconnect Timer
+                if (player.disconnectGameTimeout) {
+                    clearTimeout(player.disconnectGameTimeout);
+                    player.disconnectGameTimeout = null;
+                    console.log(`Game abandonment timer cancelled for ${player.name}`);
+
+                    // Notify Game of Reconnection
+                    if (room.gameStarted) {
+                        const isWhite = (room.slots.white && room.slots.white.token === player.token);
+                        const isBlack = (room.slots.black && room.slots.black.token === player.token);
+                        const color = isWhite ? 'White' : (isBlack ? 'Black' : null);
+
+                        if (color) {
+                            io.to(roomCode).emit('player_reconnected_game', { color });
+                        }
+                    }
+                }
+
+                // If they were in a slot, update the slot's ID too
+                if (room.slots.white && room.slots.white.token === player.token) room.slots.white = player;
+                if (room.slots.black && room.slots.black.token === player.token) room.slots.black = player;
+
+            } else {
+                // NEW PLAYER
+                const newToken = generatePlayerToken();
+                player = { id: socket.id, name: playerName, shineColor: null, token: newToken, disconnectGameTimeout: null };
+                room.players.push(player);
+                // We will send this new token back
+                playerToken = newToken;
             }
 
             socket.join(roomCode);
 
             // Check Admin Reconnection
             let isAdmin = false;
-            // 1. Standard ID check (unlikely if re-connected)
+            // 1. Standard ID check
             if (socket.id === room.admin) {
                 isAdmin = true;
             }
-            // 2. Token Check (The Fix)
+            // 2. Token Check (Admin Token)
             else if (adminToken && adminToken === room.adminToken) {
                 console.log(`Admin reconnected to room ${roomCode}`);
-                room.admin = socket.id; // Update Admin ID
+                room.admin = socket.id;
                 isAdmin = true;
-
-                // Clear Grace Period Timeout if exists
                 if (room.disconnectTimeout) {
                     clearTimeout(room.disconnectTimeout);
                     room.disconnectTimeout = null;
@@ -85,7 +130,14 @@ io.on('connection', (socket) => {
                 }
             }
 
-            socket.emit('joined_room', { roomCode, isAdmin, adminToken: (isAdmin ? room.adminToken : null) });
+            // Send response (include playerToken for storage)
+            socket.emit('joined_room', {
+                roomCode,
+                isAdmin,
+                adminToken: (isAdmin ? room.adminToken : null),
+                playerToken: player['token']
+            });
+
             io.to(roomCode).emit('update_lobby', room);
 
             // Reconnection Logic: If game is active, send full state
@@ -341,11 +393,9 @@ io.on('connection', (socket) => {
         for (const roomCode in rooms) {
             const room = rooms[roomCode];
 
-            // If Admin leaves -> START GRACE PERIOD
+            // 1. Handle Admin Disconnect (Room Closure)
             if (room.admin === socket.id) {
                 console.log(`Admin disconnected from Room ${roomCode}. Starting 60s grace period.`);
-
-                // Set timeout to close room
                 room.disconnectTimeout = setTimeout(() => {
                     if (rooms[roomCode] && rooms[roomCode].admin === socket.id) {
                         io.to(roomCode).emit('room_closed');
@@ -353,27 +403,91 @@ io.on('connection', (socket) => {
                         console.log(`Room ${roomCode} closed (Admin left - Grace period ended)`);
                     }
                 }, 60000); // 60 Seconds
-
-                // Do NOT delete room yet.
-                // Do NOT mark game as over yet (unless we want to pause?).
-                // For now, let game continue blindly for 60s.
-                continue;
             }
 
-            // Regular player leaves
-            const index = room.players.findIndex(p => p.id === socket.id);
-            if (index !== -1) {
-                room.players.splice(index, 1);
+            // 2. Check if this user is an Active Player in a Game
+            let activeColor = null;
+            if (room.gameStarted) {
+                if (room.slots.white && room.slots.white.id === socket.id) activeColor = 'White';
+                if (room.slots.black && room.slots.black.id === socket.id) activeColor = 'Black';
+            }
 
-                // Remove from slots if assigned
-                if (room.slots.white && room.slots.white.id === socket.id) room.slots.white = null;
-                if (room.slots.black && room.slots.black.id === socket.id) room.slots.black = null;
+            if (activeColor) {
+                // GAME ABANDONMENT LOGIC
+                console.log(`${activeColor} disconnected during game! Starting 60s abort timer.`);
 
-                // Send update if room still exists
-                if (room.players.length === 0) {
-                    delete rooms[roomCode];
+                // Broadcast Warning
+                io.to(roomCode).emit('player_disconnected_game', { color: activeColor, time: 60 });
+
+                // Find player object
+                const player = room.players.find(p => p.id === socket.id);
+                if (player) {
+                    player.disconnectGameTimeout = setTimeout(() => {
+                        // Check if they came back? (Timeout is cleared on reconnect)
+                        // If we are here, they didn't come back.
+                        console.log(`Player ${player.name} (${activeColor}) abandoned the game.`);
+
+                        const winner = (activeColor === 'White') ? 'Black' : 'White';
+                        io.to(roomCode).emit('game_over', {
+                            reason: 'Abandonment',
+                            winner: winner,
+                            message: `${activeColor} disconnected. ${winner} wins!`
+                        });
+                        room.gameStarted = false;
+
+                        // Remove player completely now
+                        const idx = room.players.indexOf(player);
+                        if (idx !== -1) {
+                            room.players.splice(idx, 1);
+                            if (room.slots.white === player) room.slots.white = null;
+                            if (room.slots.black === player) room.slots.black = null;
+                        }
+
+                        io.to(roomCode).emit('update_lobby', room);
+
+                    }, 60000); // 60 Seconds
+                }
+
+                // Do NOT remove them from room/slots yet. Look below.
+                // We typically skip the "Regular player leaves" logic block if we want to hold their spot?
+                // OR adapt the logic below to NOT delete if they have a timeout running.
+            }
+
+            // 3. Regular Player Logic (Only remove if NOT keeping spot)
+            // If they are admin or active player with timer, we keep them in `players` list for now.
+            // But `disconnect` implies the socket is GONE.
+            // We usually keep the OBJECT in `players` but maybe mark as offline?
+            // Current code finds by ID. If we don't remove, `update_lobby` sends old ID.
+            // Reconnect updates ID. This is fine. AS LONG AS WE DON'T DELETE FROM ARRAY.
+
+            const player = room.players.find(p => p.id === socket.id);
+            if (player) {
+                // If Admin or Active Player with timeout, DO NOT REMOVE from array yet.
+                const isAdmin = (room.admin === socket.id);
+                const isProtected = isAdmin || (activeColor !== null);
+
+                if (!isProtected) {
+                    // Ordinary spectator or lobby player -> Bye
+                    const index = room.players.indexOf(player);
+                    if (index !== -1) {
+                        room.players.splice(index, 1);
+                        // Clean slots (non-game time)
+                        if (room.slots.white === player) room.slots.white = null;
+                        if (room.slots.black === player) room.slots.black = null;
+
+                        if (room.players.length === 0) {
+                            delete rooms[roomCode];
+                        } else {
+                            io.to(roomCode).emit('update_lobby', room);
+                        }
+                    }
                 } else {
-                    io.to(roomCode).emit('update_lobby', room);
+                    // Protected: Just mark as offline? Or do nothing?
+                    // We need to update lobby so others see they are gone?
+                    // Maybe add an "offline" flag? 
+                    // For now, simplicity: Don't remove. They appear in lobby but message says they left?
+                    // Actually, if we don't remove, they stay in the list.
+                    // The client might see them. That's good for "reconnecting...".
                 }
             }
         }

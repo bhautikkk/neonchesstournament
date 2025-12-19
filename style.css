@@ -807,10 +807,13 @@ input,
     font-weight: 600;
     font-size: 1.1rem;
     color: #fff;
-    max-width: 150px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    max-width: 300px;
+    /* Increased from 150px */
+    white-space: normal;
+    /* Allow wrapping */
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.2;
 }
 
 .captured-pieces {

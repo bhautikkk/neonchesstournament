@@ -498,23 +498,9 @@ socket.on('draw_offered', () => {
     };
 });
 
-socket.on('draw_rejected', ({ rejectorColor }) => {
-    // If I am the one who rejected (not possible via this event usually as it is socket.to), 
-    // but just in case logic changes.
-
-    // If I am the one who OFFERED, I see "Your offer is rejected"
-    // The rejector is the opponent.
-    // If I am White, and rejector is Black -> I am the offerer.
-
-    let message = `Draw offer rejected by ${rejectorColor}`;
-
-    if (myColor === 'w' && rejectorColor === 'Black') {
-        message = "Your offer was rejected";
-    } else if (myColor === 'b' && rejectorColor === 'White') {
-        message = "Your offer was rejected";
-    }
-
-    showToast(message, 3000);
+socket.on('draw_rejected', () => {
+    // Neutral message for everyone
+    showToast("Draw offer was rejected", 2000);
 });
 
 socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
@@ -553,8 +539,6 @@ socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
     let title = "";
     if (winner === 'Draw') {
         title = "Draw!";
-    } else if (reason === 'Timeout') {
-        title = `${winner} Wins on Time`;
     } else {
         title = `${winner} Wins!`;
     }
@@ -564,9 +548,21 @@ socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
 
     turnIndicator.innerText = `${title} (${subtext})`;
 
-    // If Disconnect, Do NOT show popup (As per "ye na aaye")
-    // Just update the text above and stop.
-    if (reason.toLowerCase().includes('disconnect')) return;
+    // If Disconnect (Warning), Do NOT show popup
+    // BUT if reason is 'Abandonment', we DO want to show popup now.
+    // 'disconnect' logic usually came from `player_disconnected_game` event for warnings.
+    // The `game_over` reason 'Abandonment' means they actually lost.
+
+    // We only skip if it's the *Warning* phase (which isn't game_over).
+    // So actually, if reason is 'Abandonment', let it fall through to popup.
+    // If reason is just "Player Disconnected" (Warning) - that's not a game_over event usually.
+    // server.js emits 'game_over' only on Abandonment or Resignation/Checkmate/Timeout.
+
+    // So we remove the block:
+    // if (reason.toLowerCase().includes('disconnect')) return; 
+
+    // However, let's keep it safe. If reason says "Abandonment", show popup.
+    if (reason.toLowerCase().includes('disconnect') && !reason.toLowerCase().includes('abandonment')) return;
 
     // STEP 1: Show Winner Popup (2 Seconds)
     const postGameModal = document.createElement('div');
@@ -950,7 +946,7 @@ socket.on('game_started', ({ whitePlayerId, blackPlayerId }) => {
     updateDashboardUI();  // NEW
 });
 
-socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT, blackTime: bT, turn }) => {
+socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT, blackTime: bT, turn, whiteDisconnected, blackDisconnected }) => {
     isGameActive = true;
     showScreen('game');
     gameRoomCodeDisplay.innerText = "Room: " + currentRoom.code;
@@ -973,8 +969,25 @@ socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT,
     if (myColor === null) {
         const whiteP = currentRoom.players.find(p => p.id === whitePlayerId);
         const blackP = currentRoom.players.find(p => p.id === blackPlayerId);
-        myNameDisplay.innerText = whiteP ? whiteP.name : "White";
-        oppNameDisplay.innerText = blackP ? blackP.name : "Black";
+
+        // Helper to update text with status
+        const getName = (p, isDisc) => {
+            if (!p) return "Waiting...";
+            return isDisc ? `${p.name} (Reconnecting...)` : p.name;
+        };
+
+        const wName = getName(whiteP, whiteDisconnected);
+        const bName = getName(blackP, blackDisconnected);
+
+        myNameDisplay.innerText = wName;
+        oppNameDisplay.innerText = bName;
+
+        if (whiteDisconnected || blackDisconnected) {
+            // Optional: Style them red?
+            if (whiteDisconnected) myNameDisplay.style.color = '#ff4444';
+            if (blackDisconnected) oppNameDisplay.style.color = '#ff4444';
+        }
+
         if (actionControls) actionControls.classList.add('hidden');
     } else {
         const myPlayer = currentRoom.players.find(p => p.id === myId);
@@ -983,7 +996,12 @@ socket.on('reconnect_game', ({ whitePlayerId, blackPlayerId, fen, whiteTime: wT,
 
         if (opponentId) {
             const oppPlayer = currentRoom.players.find(p => p.id === opponentId);
-            if (oppPlayer) oppNameDisplay.innerText = oppPlayer.name;
+            const isOppDisc = (myColor === 'w') ? blackDisconnected : whiteDisconnected;
+
+            if (oppPlayer) {
+                oppNameDisplay.innerText = isOppDisc ? `${oppPlayer.name} (Reconnecting...)` : oppPlayer.name;
+                if (isOppDisc) oppNameDisplay.style.color = '#ff4444';
+            }
         }
     }
 
@@ -1168,23 +1186,9 @@ function startTimers() {
 }
 
 function handleFlagFall(loser) {
-    if (!isGameActive) return;
-
-    // Stop local game
     isGameActive = false;
-    if (timerInterval) clearInterval(timerInterval);
-
     let winner = (loser === 'white') ? 'Black' : 'White';
-
-    // Emit claim to server to trigger Game Over logic everywhere
-    const lastMove = game.history({ verbose: true }).pop();
-    socket.emit('claim_game_over', {
-        roomCode: currentRoom.code,
-        reason: 'Timeout',
-        winner: winner,
-        fen: game.fen(),
-        lastMove
-    });
+    turnIndicator.innerHTML = `Game Over: ${winner} wins on time!`;
 }
 
 function updateDashboardUI(curWhite = whiteTime, curBlack = blackTime) {

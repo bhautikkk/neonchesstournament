@@ -12,6 +12,46 @@ app.use(express.static(path.join(__dirname, '.')));
 
 const rooms = {};
 
+// Game Loop: Check for timeouts every second
+setInterval(() => {
+    const now = Date.now();
+    for (const roomCode in rooms) {
+        const room = rooms[roomCode];
+        if (room.gameStarted) {
+            const elapsed = (now - room.lastMoveTime) / 1000;
+            // Note: We don't decrement strictly every second in state, 
+            // we calculate based on elapsed since last move. 
+            // But we need to check if limit exceeded.
+
+            let currentWhiteTime = room.whiteTime;
+            let currentBlackTime = room.blackTime;
+
+            if (room.turn === 'w') {
+                currentWhiteTime -= elapsed;
+            } else {
+                currentBlackTime -= elapsed;
+            }
+
+            if (currentWhiteTime <= 0 || currentBlackTime <= 0) {
+                // Timeout!
+                const winner = (currentWhiteTime <= 0) ? 'Black' : 'White';
+                io.to(roomCode).emit('game_over', {
+                    reason: 'Timeout',
+                    winner: winner,
+                    message: `Time's up! ${winner} Wins!`
+                });
+                room.gameStarted = false;
+
+                // Reset times to 0 for neatness
+                if (currentWhiteTime <= 0) room.whiteTime = 0;
+                if (currentBlackTime <= 0) room.blackTime = 0;
+
+                io.to(roomCode).emit('update_lobby', room);
+            }
+        }
+    }
+}, 1000);
+
 // Helper to generate 6 digit code
 function generateRoomCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
@@ -155,13 +195,21 @@ io.on('connection', (socket) => {
                     }
                 }
 
+                // Check if any player is currently disconnected (in grace period)
+                const whiteP = room.slots.white;
+                const blackP = room.slots.black;
+                const whiteDisconnected = (whiteP && whiteP.disconnectGameTimeout !== null);
+                const blackDisconnected = (blackP && blackP.disconnectGameTimeout !== null);
+
                 socket.emit('reconnect_game', {
                     whitePlayerId: room.slots.white.id,
                     blackPlayerId: room.slots.black.id,
                     fen: room.fen,
                     whiteTime: currentWhiteTime,
                     blackTime: currentBlackTime,
-                    turn: room.turn
+                    turn: room.turn,
+                    whiteDisconnected, // NEW
+                    blackDisconnected  // NEW
                 });
             }
 
@@ -365,15 +413,10 @@ io.on('connection', (socket) => {
 
     socket.on('reject_draw', (roomCode) => {
         const room = rooms[roomCode];
-        if (room) {
-            const player = room.players.find(p => p.id === socket.id);
-            // Determine color of rejector
-            let rejectorColor = 'Opponent';
-            if (room.slots.white && room.slots.white.id === socket.id) rejectorColor = 'White';
-            if (room.slots.black && room.slots.black.id === socket.id) rejectorColor = 'Black';
-
-            socket.to(roomCode).emit('draw_rejected', { rejectorColor });
-        }
+        // Broadcast generic message to everyone.
+        // Client side will handle "Your offer" vs "Draw offer" differentiation if possible, 
+        // or we just show a neutral "Draw offer rejected" to everyone.
+        io.to(roomCode).emit('draw_rejected');
     });
 
     // Chat

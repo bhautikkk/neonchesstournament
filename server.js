@@ -365,10 +365,15 @@ io.on('connection', (socket) => {
 
     socket.on('reject_draw', (roomCode) => {
         const room = rooms[roomCode];
-        // Find opponent socket
-        // But broadcast is fine if we filter on client, or better: send to opponent only.
-        // For simplicity in this structure: broadcast 'draw_rejected' to room, client filters self.
-        socket.to(roomCode).emit('draw_rejected');
+        if (room) {
+            const player = room.players.find(p => p.id === socket.id);
+            // Determine color of rejector
+            let rejectorColor = 'Opponent';
+            if (room.slots.white && room.slots.white.id === socket.id) rejectorColor = 'White';
+            if (room.slots.black && room.slots.black.id === socket.id) rejectorColor = 'Black';
+
+            socket.to(roomCode).emit('draw_rejected', { rejectorColor });
+        }
     });
 
     // Chat

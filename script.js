@@ -498,8 +498,23 @@ socket.on('draw_offered', () => {
     };
 });
 
-socket.on('draw_rejected', () => {
-    showToast("Your offer is rejected", 2000);
+socket.on('draw_rejected', ({ rejectorColor }) => {
+    // If I am the one who rejected (not possible via this event usually as it is socket.to), 
+    // but just in case logic changes.
+
+    // If I am the one who OFFERED, I see "Your offer is rejected"
+    // The rejector is the opponent.
+    // If I am White, and rejector is Black -> I am the offerer.
+
+    let message = `Draw offer rejected by ${rejectorColor}`;
+
+    if (myColor === 'w' && rejectorColor === 'Black') {
+        message = "Your offer was rejected";
+    } else if (myColor === 'b' && rejectorColor === 'White') {
+        message = "Your offer was rejected";
+    }
+
+    showToast(message, 3000);
 });
 
 socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
@@ -538,6 +553,8 @@ socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
     let title = "";
     if (winner === 'Draw') {
         title = "Draw!";
+    } else if (reason === 'Timeout') {
+        title = `${winner} Wins on Time`;
     } else {
         title = `${winner} Wins!`;
     }
@@ -1151,9 +1168,23 @@ function startTimers() {
 }
 
 function handleFlagFall(loser) {
+    if (!isGameActive) return;
+
+    // Stop local game
     isGameActive = false;
+    if (timerInterval) clearInterval(timerInterval);
+
     let winner = (loser === 'white') ? 'Black' : 'White';
-    turnIndicator.innerHTML = `Game Over: ${winner} wins on time!`;
+
+    // Emit claim to server to trigger Game Over logic everywhere
+    const lastMove = game.history({ verbose: true }).pop();
+    socket.emit('claim_game_over', {
+        roomCode: currentRoom.code,
+        reason: 'Timeout',
+        winner: winner,
+        fen: game.fen(),
+        lastMove
+    });
 }
 
 function updateDashboardUI(curWhite = whiteTime, curBlack = blackTime) {

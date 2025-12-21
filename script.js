@@ -26,6 +26,7 @@ const urlRoomCode = urlParams.get('room');
 
 // Lobby Elements
 const displayRoomCode = document.getElementById('displayRoomCode');
+const timeControlSelect = document.getElementById('timeControlSelect');
 
 // Modal Elements
 const customModal = document.getElementById('customModal');
@@ -677,7 +678,8 @@ if (returnToLobbyBtn) {
 
 startGameBtn.addEventListener('click', () => {
     if (isAdmin && currentRoom) {
-        socket.emit('start_game', currentRoom.code);
+        const duration = parseInt(timeControlSelect.value) || 7; // Default 7
+        socket.emit('start_game', { roomCode: currentRoom.code, duration });
     }
 });
 
@@ -901,7 +903,7 @@ socket.on('update_lobby', (room) => {
     renderLobby(room);
 });
 
-socket.on('game_started', ({ whitePlayerId, blackPlayerId }) => {
+socket.on('game_started', ({ whitePlayerId, blackPlayerId, whiteTime: wT, blackTime: bT }) => {
     isGameActive = true;
     showScreen('game');
     gameRoomCodeDisplay.innerText = "Room: " + currentRoom.code;
@@ -955,8 +957,8 @@ socket.on('game_started', ({ whitePlayerId, blackPlayerId }) => {
     game.reset();
     if (btnPGN) btnPGN.classList.add('hidden'); // Hide PGN at start of new game
     if (returnToLobbyBtn) returnToLobbyBtn.classList.add('hidden'); // Hide Lobby Btn
-    whiteTime = 600;
-    blackTime = 600;
+    whiteTime = wT || 420; // Default to 7m if missing
+    blackTime = bT || 420;
     updateTurnIndicator();
     renderBoard();
     updateMaterial();     // NEW
@@ -1157,6 +1159,7 @@ function renderLobby(room) {
         adminMsg.style.display = 'block';
         waitingText.style.display = 'none';
         startGameBtn.style.display = 'inline-block';
+        timeControlSelect.style.display = 'inline-block'; // Show dropdown
 
         // Enable start only if both slots filled
         if (room.slots.white && room.slots.black) {
@@ -1170,6 +1173,7 @@ function renderLobby(room) {
         adminMsg.style.display = 'none';
         waitingText.style.display = 'block';
         startGameBtn.style.display = 'none';
+        timeControlSelect.style.display = 'none'; // Hide dropdown
     }
 
     // Back to Game Button Logic

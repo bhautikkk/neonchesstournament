@@ -303,30 +303,41 @@ io.on('connection', (socket) => {
     }));
 
     // Start Game (Admin Only)
-    socket.on('start_game', safeHandler((roomCode) => {
+    // Start Game (Admin Only)
+    socket.on('start_game', safeHandler((payload) => {
+        // Support both old (string roomCode) and new ({roomCode, duration}) formats
+        let roomCode, duration;
+        if (typeof payload === 'object') {
+            roomCode = payload.roomCode;
+            duration = payload.duration;
+        } else {
+            roomCode = payload;
+            duration = 7; // Default fallback
+        }
+
         const room = rooms[roomCode];
         if (room && room.admin === socket.id) {
             if (room.slots.white && room.slots.black) {
+                // Validate duration (3, 5, or 7) - Default to 7
+                const validDurations = [3, 5, 7];
+                const finalDuration = validDurations.includes(duration) ? duration : 7;
+                const timeInSeconds = finalDuration * 60;
+
                 room.gameStarted = true;
                 room.fen = 'start';
-                room.whiteTime = 600;
-                room.blackTime = 600;
-                room.turn = 'w';
-                room.whiteTime = 600;
-                room.blackTime = 600;
+                room.whiteTime = timeInSeconds;
+                room.blackTime = timeInSeconds;
                 room.turn = 'w';
                 room.pgn = ''; // Initialize PGN
                 room.lastMoveTime = Date.now(); // Start clock now
 
                 io.to(roomCode).emit('game_started', {
                     whitePlayerId: room.slots.white.id,
-                    blackPlayerId: room.slots.black.id
+                    blackPlayerId: room.slots.black.id,
+                    whiteTime: room.whiteTime,
+                    blackTime: room.blackTime
                 });
-                io.to(roomCode).emit('game_started', {
-                    whitePlayerId: room.slots.white.id,
-                    blackPlayerId: room.slots.black.id
-                });
-                console.log(`Game started in room ${roomCode}`);
+                console.log(`Game started in room ${roomCode} with ${finalDuration} min duration`);
                 saveRooms(); // Save on Start Game
             } else {
                 socket.emit('error_message', 'Both slots must be filled to start.');

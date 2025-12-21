@@ -92,6 +92,12 @@
                 <p id="adminMsg" class="admin-only">You are Admin. Select players for slots.</p>
                 <button id="backToGameBtn" class="glow-btn hidden"
                     style="background: #e67e22; margin-bottom: 10px;">Back to Live Game</button>
+                <select id="timeControlSelect" class="glow-select admin-only"
+                    style="margin-bottom: 10px; padding: 8px; border-radius: 5px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #81b64c;">
+                    <option value="3">3 Minutes</option>
+                    <option value="5">5 Minutes</option>
+                    <option value="7" selected>7 Minutes</option>
+                </select>
                 <button id="startGameBtn" class="glow-btn disabled" disabled>Start Game</button>
 
                 <p class="waiting-text" id="waitingText">Waiting for admin to start...</p>

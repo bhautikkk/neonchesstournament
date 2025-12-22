@@ -605,6 +605,12 @@ socket.on('game_over', ({ reason, winner, message, fen, lastMove }) => {
         if (postGameModal.parentNode) postGameModal.parentNode.removeChild(postGameModal);
         // User stays on board. No navigation options added.
     }, 2000);
+
+    // FIX: Force set timers to 0:00 if Timeout
+    if (reason === 'Timeout') {
+        if (winner === 'White') updateDashboardUI(whiteTime, 0); // Black timed out
+        else if (winner === 'Black') updateDashboardUI(0, blackTime); // White timed out
+    }
 });
 
 function showScreen(screenName) {
@@ -696,7 +702,8 @@ if (returnToLobbyBtn) {
 
 startGameBtn.addEventListener('click', () => {
     if (isAdmin && currentRoom) {
-        const duration = parseInt(timeControlSelect.value) || 7; // Default 7
+        const activeBtn = document.querySelector('.time-btn.active');
+        const duration = activeBtn ? parseInt(activeBtn.getAttribute('data-value')) : 7;
         socket.emit('start_game', { roomCode: currentRoom.code, duration });
     }
 });
@@ -727,6 +734,16 @@ function handleSlotClick(slotColor, event) {
         renderLobby(currentRoom);
     }
 }
+
+const timeControlContainer = document.getElementById('timeControlContainer');
+
+document.querySelectorAll('.time-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!isAdmin) return;
+        document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    });
+});
 
 slotWhite.addEventListener('click', (e) => handleSlotClick('white', e));
 slotBlack.addEventListener('click', (e) => handleSlotClick('black', e));
@@ -902,6 +919,30 @@ function resetToMain() {
     currentViewIndex = 0;
 }
 
+socket.on('starting_countdown', ({ duration }) => {
+    const countdownScreen = document.getElementById('countdownScreen');
+    const countdownNumber = document.getElementById('countdownNumber');
+
+    if (countdownScreen && countdownNumber) {
+        countdownScreen.classList.remove('hidden');
+        let count = duration;
+        countdownNumber.innerText = count;
+
+        const interval = setInterval(() => {
+            count--;
+            if (count > 0) {
+                countdownNumber.innerText = count;
+            } else {
+                clearInterval(interval);
+                // Don't hide here immediately, game_started will hide it (or we hide on 0)
+                // Let's hide it when game_started arrives to be smooth.
+                // Or show "GO!"
+                countdownNumber.innerText = "GO!";
+            }
+        }, 1000);
+    }
+});
+
 socket.on('update_lobby', (room) => {
     currentRoom = room;
 
@@ -922,6 +963,10 @@ socket.on('update_lobby', (room) => {
 });
 
 socket.on('game_started', ({ whitePlayerId, blackPlayerId, whiteTime: wT, blackTime: bT }) => {
+    // Hide Countdown
+    const countdownScreen = document.getElementById('countdownScreen');
+    if (countdownScreen) countdownScreen.classList.add('hidden');
+
     isGameActive = true;
     showScreen('game');
     gameRoomCodeDisplay.innerText = "Room: " + currentRoom.code;
@@ -1106,6 +1151,11 @@ socket.on('move_made', ({ move, fen, whiteTime: wT, blackTime: bT }) => {
     if (wT !== undefined) whiteTime = wT; // Keep precise float
     if (bT !== undefined) blackTime = bT;
 
+    // New Sync Point (Crucial for accurate countdown)
+    lastTimerSync = Date.now();
+    // Also force an immediate UI update to snap to server time
+    updateDashboardUI(whiteTime, blackTime);
+
     // 4. Reset Timer Loop to align with this receipt time
     startTimers();
 
@@ -1177,7 +1227,7 @@ function renderLobby(room) {
         adminMsg.style.display = 'block';
         waitingText.style.display = 'none';
         startGameBtn.style.display = 'inline-block';
-        timeControlSelect.style.display = 'inline-block'; // Show dropdown
+        timeControlContainer.style.display = 'flex'; // Show new container
 
         // Enable start only if both slots filled
         if (room.slots.white && room.slots.black) {
@@ -1191,7 +1241,7 @@ function renderLobby(room) {
         adminMsg.style.display = 'none';
         waitingText.style.display = 'block';
         startGameBtn.style.display = 'none';
-        timeControlSelect.style.display = 'none'; // Hide dropdown
+        timeControlContainer.style.display = 'none'; // Hide new container
     }
 
     // Back to Game Button Logic
@@ -1723,6 +1773,71 @@ socket.on('receive_chat', ({ name, message, isAdmin: senderIsAdmin }) => {
 
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+});
+
+// ============================================
+// ADMIN DISCONNECT HANDLING
+// ============================================
+const adminLeftModal = document.getElementById('adminLeftModal');
+const adminLeftTimer = document.getElementById('adminLeftTimer');
+const btnAdminLeftOk = document.getElementById('btnAdminLeftOk');
+let adminLeftInterval = null;
+
+if (btnAdminLeftOk) {
+    btnAdminLeftOk.onclick = () => {
+        location.reload();
+    };
+}
+
+socket.on('admin_left', ({ timeout }) => {
+    if (adminLeftModal && adminLeftTimer) {
+        if (adminLeftInterval) clearInterval(adminLeftInterval);
+
+        adminLeftModal.classList.remove('hidden');
+        let timeLeft = timeout;
+        adminLeftTimer.innerText = timeLeft;
+
+        adminLeftInterval = setInterval(() => {
+            timeLeft--;
+            adminLeftTimer.innerText = timeLeft;
+            if (timeLeft <= 0) {
+                clearInterval(adminLeftInterval);
+                location.reload(); // Force reload on timeout
+            }
+        }, 1000);
+    }
+});
+
+socket.on('admin_return', () => {
+    if (adminLeftModal) {
+        adminLeftModal.classList.add('hidden');
+        if (adminLeftInterval) clearInterval(adminLeftInterval);
+        showToast("Admin has reconnected!", 3000);
+    }
+});
+
+socket.on('room_closed', () => {
+    // Re-use the Admin Left Modal but update text
+    if (adminLeftModal) {
+        if (adminLeftInterval) clearInterval(adminLeftInterval);
+        adminLeftModal.classList.remove('hidden');
+
+        const title = adminLeftModal.querySelector('h2');
+        const p = adminLeftModal.querySelector('p');
+        const btn = document.getElementById('btnAdminLeftOk');
+
+        if (title) title.innerText = "Room Closed";
+        if (p) {
+            p.innerText = "The room has been closed by the admin.";
+        }
+        if (btn) btn.innerText = "Return to Menu";
+
+        // Ensure reload on click
+        if (btn) btn.onclick = () => location.reload();
+    } else {
+        // Fallback if modal missing (shouldn't happen)
+        location.reload();
+    }
 });
 
 

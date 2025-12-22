@@ -1151,3 +1151,56 @@ input,
     filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.2));
     /* Restore glow */
 }
+
+/* Time Control Selector */
+.time-selector {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.time-btn {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(129, 182, 76, 0.3);
+    color: #aaa;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    flex: 1;
+}
+
+.time-btn:hover {
+    background: rgba(129, 182, 76, 0.1);
+    color: #ddd;
+    border-color: rgba(129, 182, 76, 0.6);
+}
+
+.time-btn.active {
+    background: linear-gradient(135deg, #81b64c, #5e8c33);
+    color: #fff;
+    border-color: #81b64c;
+    box-shadow: 0 0 10px rgba(129, 182, 76, 0.4);
+    transform: translateY(-2px);
+}
+
+/* Countdown Screen */
+/* Countdown Screen (Logic Only - Styling is Inline/Glass Card) */
+#countdownScreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+#countdownScreen.hidden {
+    display: none;
+}

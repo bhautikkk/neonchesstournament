@@ -90,13 +90,30 @@ setInterval(() => {
                     message: `Time's up! ${winner} Wins!`
                 });
                 room.gameStarted = false;
-
                 // Reset times to 0 for neatness
                 if (currentWhiteTime <= 0) room.whiteTime = 0;
                 if (currentBlackTime <= 0) room.blackTime = 0;
 
                 io.to(roomCode).emit('update_lobby', safeRoom(room));
                 saveRooms(); // Save on Timeout
+
+                // Delayed Admin Leave Check
+                if (room.adminLeftDuringGame) {
+                    console.log(`Game over (Timeout). Admin absent. Scheduling delayed close in 10s.`);
+                    room.delayedCloseTimeout = setTimeout(() => {
+                        if (!rooms[roomCode]) return;
+                        // Emit admin_left and start standard 60s countdown
+                        io.to(roomCode).emit('admin_left', { timeout: 60 });
+                        room.disconnectTimeout = setTimeout(() => {
+                            if (rooms[roomCode]) {
+                                io.to(roomCode).emit('room_closed');
+                                delete rooms[roomCode];
+                                saveRooms();
+                            }
+                        }, 60000);
+                        room.adminLeftDuringGame = false; // Flag consumed
+                    }, 10000); // 10 seconds delay
+                }
             }
         }
     }
@@ -137,7 +154,11 @@ io.on('connection', (socket) => {
             turn: 'w',
             whiteTime: 600,
             blackTime: 600,
-            lastMoveTime: 0
+            whiteTime: 600,
+            blackTime: 600,
+            lastMoveTime: 0,
+            adminLeftDuringGame: false, // Track if admin left during active game
+            delayedCloseTimeout: null // Track the 10s delay timer
         };
 
         socket.join(roomCode);
@@ -231,6 +252,16 @@ io.on('connection', (socket) => {
                     room.disconnectTimeout = null;
                     console.log(`Grace period cancelled for room ${roomCode}`);
                 }
+                if (room.adminLeftDuringGame) {
+                    room.adminLeftDuringGame = false;
+                    console.log(`Admin returned during game/delay. Resetting flag.`);
+                }
+                if (room.delayedCloseTimeout) {
+                    clearTimeout(room.delayedCloseTimeout);
+                    room.delayedCloseTimeout = null;
+                    console.log("Cancelled delayed room closure.");
+                }
+                io.to(roomCode).emit('admin_return'); // Notify clients
                 saveRooms(); // Save on Admin Reconnect
             }
 
@@ -339,27 +370,46 @@ io.on('connection', (socket) => {
         const room = rooms[roomCode];
         if (room && room.admin === socket.id) {
             if (room.slots.white && room.slots.black) {
-                // Validate duration (3, 5, or 7) - Default to 7
+                // Validate duration
                 const validDurations = [3, 5, 7];
                 const finalDuration = validDurations.includes(duration) ? duration : 7;
-                const timeInSeconds = finalDuration * 60;
 
-                room.gameStarted = true;
-                room.fen = 'start';
-                room.whiteTime = timeInSeconds;
-                room.blackTime = timeInSeconds;
-                room.turn = 'w';
-                room.pgn = ''; // Initialize PGN
-                room.lastMoveTime = Date.now(); // Start clock now
+                // NOTIFY CLIENTS TO START COUNTDOWN
+                io.to(roomCode).emit('starting_countdown', { duration: 3 });
 
-                io.to(roomCode).emit('game_started', {
-                    whitePlayerId: room.slots.white.id,
-                    blackPlayerId: room.slots.black.id,
-                    whiteTime: room.whiteTime,
-                    blackTime: room.blackTime
-                });
-                console.log(`Game started in room ${roomCode} with ${finalDuration} min duration`);
-                saveRooms(); // Save on Start Game
+                // DELAY START
+                setTimeout(() => {
+                    // Check if room still valid and slots still filled (edge case: someone left during countdown)
+                    // If room deleted or player left, abort.
+                    if (!rooms[roomCode] || !rooms[roomCode].slots.white || !rooms[roomCode].slots.black) return;
+
+                    const timeInSeconds = finalDuration * 60;
+
+                    room.gameStarted = true;
+                    room.fen = 'start';
+                    room.whiteTime = timeInSeconds;
+                    room.blackTime = timeInSeconds;
+                    room.turn = 'w';
+                    room.pgn = ''; // Initialize PGN
+                    room.lastMoveTime = Date.now(); // Start clock now
+
+                    // Reset Disconnect Timers on fresh start
+                    const wP = room.slots.white;
+                    const bP = room.slots.black;
+                    if (wP.disconnectGameTimeout) { clearTimeout(wP.disconnectGameTimeout); wP.disconnectGameTimeout = null; }
+                    if (bP.disconnectGameTimeout) { clearTimeout(bP.disconnectGameTimeout); bP.disconnectGameTimeout = null; }
+
+
+                    io.to(roomCode).emit('game_started', {
+                        whitePlayerId: room.slots.white.id,
+                        blackPlayerId: room.slots.black.id,
+                        whiteTime: room.whiteTime,
+                        blackTime: room.blackTime
+                    });
+                    console.log(`Game started in room ${roomCode} with ${finalDuration} min duration`);
+                    saveRooms(); // Save on Start Game
+                }, 3500); // 3.5s delay (3s countdown + 0.5s buffer)
+
             } else {
                 socket.emit('error_message', 'Both slots must be filled to start.');
             }
@@ -464,7 +514,18 @@ io.on('connection', (socket) => {
             });
             room.gameStarted = false;
             io.to(roomCode).emit('update_lobby', safeRoom(room));
+            io.to(roomCode).emit('update_lobby', safeRoom(room));
             saveRooms(); // Save on Resign
+
+            if (room.adminLeftDuringGame) {
+                console.log(`Game over (Resign). Admin absent. Scheduling delayed close in 10s.`);
+                room.delayedCloseTimeout = setTimeout(() => {
+                    if (!rooms[roomCode]) return;
+                    io.to(roomCode).emit('admin_left', { timeout: 60 });
+                    room.disconnectTimeout = setTimeout(() => { if (rooms[roomCode]) { io.to(roomCode).emit('room_closed'); delete rooms[roomCode]; saveRooms(); } }, 60000);
+                    room.adminLeftDuringGame = false;
+                }, 10000);
+            }
         }
     }));
 
@@ -511,6 +572,23 @@ io.on('connection', (socket) => {
                 room.gameStarted = false;
                 io.to(roomCode).emit('update_lobby', safeRoom(room)); // SYNC FIX
                 saveRooms(); // Save on Timeout (Move Check)
+
+                // Delayed Admin Leave Check
+                if (room.adminLeftDuringGame) {
+                    console.log(`Game over (Move Timeout). Admin absent. Scheduling delayed close in 10s.`);
+                    room.delayedCloseTimeout = setTimeout(() => {
+                        if (!rooms[roomCode]) return;
+                        io.to(roomCode).emit('admin_left', { timeout: 60 });
+                        room.disconnectTimeout = setTimeout(() => {
+                            if (rooms[roomCode]) {
+                                io.to(roomCode).emit('room_closed');
+                                delete rooms[roomCode];
+                                saveRooms();
+                            }
+                        }, 60000);
+                        room.adminLeftDuringGame = false;
+                    }, 10000);
+                }
                 return;
             }
 
@@ -550,6 +628,16 @@ io.on('connection', (socket) => {
             });
             room.gameStarted = false;
             io.to(roomCode).emit('update_lobby', safeRoom(room)); // SYNC FIX
+
+            if (room.adminLeftDuringGame) {
+                console.log(`Game over (Claim). Admin absent. Scheduling delayed close in 10s.`);
+                room.delayedCloseTimeout = setTimeout(() => {
+                    if (!rooms[roomCode]) return;
+                    io.to(roomCode).emit('admin_left', { timeout: 60 });
+                    room.disconnectTimeout = setTimeout(() => { if (rooms[roomCode]) { io.to(roomCode).emit('room_closed'); delete rooms[roomCode]; saveRooms(); } }, 60000);
+                    room.adminLeftDuringGame = false;
+                }, 10000);
+            }
         }
     }));
 
@@ -607,6 +695,9 @@ io.on('connection', (socket) => {
 
                 if (!room.gameStarted) {
                     console.log(`No active game. Starting 60s grace period for Admin.`);
+                    // Emit immediate warning
+                    io.to(roomCode).emit('admin_left', { timeout: 60 });
+
                     room.disconnectTimeout = setTimeout(() => {
                         if (rooms[roomCode] && rooms[roomCode].admin === socket.id && !rooms[roomCode].gameStarted) {
                             io.to(roomCode).emit('room_closed');
@@ -616,8 +707,8 @@ io.on('connection', (socket) => {
                         }
                     }, 60000); // 60 Seconds
                 } else {
-                    console.log(`Active Game in progress. Room will NOT close immediately.`);
-                    // We might want to set a flag that Admin is gone, but for now just keep it.
+                    console.log(`Active Game in progress. Setting flag to close after game.`);
+                    room.adminLeftDuringGame = true;
                 }
             }
 
@@ -664,7 +755,18 @@ io.on('connection', (socket) => {
                         }
 
                         io.to(roomCode).emit('update_lobby', safeRoom(room));
+                        io.to(roomCode).emit('update_lobby', safeRoom(room));
                         saveRooms(); // Save on Abandonment Update
+
+                        if (room.adminLeftDuringGame) {
+                            console.log(`Game over (Abandonment). Admin absent. Scheduling delayed close in 10s.`);
+                            room.delayedCloseTimeout = setTimeout(() => {
+                                if (!rooms[roomCode]) return;
+                                io.to(roomCode).emit('admin_left', { timeout: 60 });
+                                room.disconnectTimeout = setTimeout(() => { if (rooms[roomCode]) { io.to(roomCode).emit('room_closed'); delete rooms[roomCode]; saveRooms(); } }, 60000);
+                                room.adminLeftDuringGame = false;
+                            }, 10000);
+                        }
 
 
                         // If room is empty now, close it

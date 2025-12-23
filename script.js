@@ -1234,7 +1234,19 @@ function renderLobby(room) {
         playerListEl.appendChild(li);
     });
 
-    // Fake Players List (Admin Only Section) - SEPARATE
+    // HYBRID VIEW LOGIC:
+    // 1. NON-ADMINS: Show fake players mixed in the main list (so it looks real to them)
+    if (!isAdmin && room.fakePlayers && room.fakePlayers.length > 0) {
+        room.fakePlayers.forEach(p => {
+            const li = document.createElement('li');
+            li.innerText = p.name;
+            // li.style.color = '#aaa'; // Keep plain for realism
+            playerListEl.appendChild(li);
+        });
+    }
+
+    // 2. ADMIN ONLY: Show fake players in a SEPARATE list (so they can differentiate)
+    // Admin sees ONLY real players in the main list (loop above), and Fake in this separate list.
     const fakePlayersSection = document.getElementById('fakePlayersSection');
     const fakePlayerListEl = document.getElementById('fakePlayerList');
 

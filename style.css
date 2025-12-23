@@ -1081,11 +1081,16 @@ input,
     gap: 15px;
 }
 
+/* Login Specific Override */
+#loginScreen .glass-card {
+    padding-top: 1rem;
+}
+
 /* Brand Logo Replacement */
 .logo-wrapper {
-    width: 120px;
+    width: 230px;
     height: auto;
-    margin: 0 auto 1.5rem auto;
+    margin: 6rem auto 0.5rem auto;
     position: relative;
     overflow: hidden;
     border-radius: 10px;
